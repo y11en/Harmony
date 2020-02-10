@@ -320,15 +320,15 @@ namespace HarmonyLib
 		///
 		public MethodInfo GetMethod(MethodBase original)
 		{
-			if (PatchMethod.ReturnType != typeof(DynamicMethod) && PatchMethod.ReturnType != typeof(MethodInfo)) return PatchMethod;
-			if (PatchMethod.IsStatic == false) return PatchMethod;
-			var parameters = PatchMethod.GetParameters();
+			var patch = PatchMethod;
+			if (patch.ReturnType != typeof(DynamicMethod)) return patch;
+			if (patch.IsStatic == false) return patch;
+			var parameters = patch.GetParameters();
 			if (parameters.Count() != 1) return PatchMethod;
-			if (parameters[0].ParameterType != typeof(MethodBase)) return PatchMethod;
+			if (parameters[0].ParameterType != typeof(MethodBase)) return patch;
 
 			// we have a DynamicMethod factory, let's use it
-			var result = PatchMethod.Invoke(null, new object[] { original });
-			return result as MethodInfo;
+			return patch.Invoke(null, new object[] { original }) as DynamicMethod;
 		}
 
 		/// <summary>Determines whether patches are equal</summary>

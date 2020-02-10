@@ -41,7 +41,7 @@ namespace HarmonyLibTests
 		*/
 
 		[Test]
-		public void Test_PatchException()
+		public void Test_PatchDeadEndCode()
 		{
 			var patchClass = typeof(DeadEndCode_Patch1);
 			Assert.NotNull(patchClass);
@@ -50,17 +50,7 @@ namespace HarmonyLibTests
 			Assert.NotNull(instance);
 			var patcher = instance.ProcessorForAnnotatedClass(patchClass);
 			Assert.NotNull(patcher);
-
-			Exception exception = null;
-			try
-			{
-				Assert.NotNull(patcher.Patch());
-			}
-			catch (Exception ex)
-			{
-				exception = ex;
-			}
-			Assert.NotNull(exception);
+			Assert.NotNull(patcher.Patch());
 		}
 
 		[Test]

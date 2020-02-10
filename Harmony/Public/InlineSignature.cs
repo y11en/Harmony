@@ -1,5 +1,3 @@
-using Mono.Cecil;
-using MonoMod.Utils;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;

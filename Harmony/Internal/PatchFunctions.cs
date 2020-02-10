@@ -148,7 +148,7 @@ namespace HarmonyLib
 		/// <param name="patchInfo">Information describing the patches</param>
 		/// <returns>The newly created replacement method</returns>
 		///
-		internal static MethodInfo UpdateWrapper(MethodBase original, PatchInfo patchInfo)
+		internal static DynamicMethod UpdateWrapper(MethodBase original, PatchInfo patchInfo)
 		{
 			var debug = patchInfo.Debugging || Harmony.DEBUG;
 
@@ -163,7 +163,8 @@ namespace HarmonyLib
 
 			try
 			{
-				Memory.DetourMethodAndPersist(original, replacement);
+				// TODO: check result
+				_ = Memory.DetourMethod(original, replacement);
 			}
 			catch (Exception ex)
 			{
@@ -172,7 +173,7 @@ namespace HarmonyLib
 			return replacement;
 		}
 
-		internal static MethodInfo ReversePatch(HarmonyMethod standin, MethodBase original, MethodInfo postTranspiler)
+		internal static DynamicMethod ReversePatch(HarmonyMethod standin, MethodBase original, MethodInfo postTranspiler)
 		{
 			if (standin == null)
 				throw new ArgumentNullException(nameof(standin));

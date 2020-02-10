@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 
 namespace HarmonyLib
 {
@@ -77,7 +78,7 @@ namespace HarmonyLib
 		/// <param name="finalizer">An optional finalizer method wrapped in a HarmonyMethod object</param>
 		/// <returns>The replacement method that was created to patch the original method</returns>
 		///
-		public MethodInfo Patch(MethodBase original, HarmonyMethod prefix = null, HarmonyMethod postfix = null, HarmonyMethod transpiler = null, HarmonyMethod finalizer = null)
+		public DynamicMethod Patch(MethodBase original, HarmonyMethod prefix = null, HarmonyMethod postfix = null, HarmonyMethod transpiler = null, HarmonyMethod finalizer = null)
 		{
 			var processor = this.CreateProcessor(original);
 			_ = processor.AddPrefix(prefix);
@@ -91,7 +92,7 @@ namespace HarmonyLib
 		/// <param name="original">The original method/constructor you want to duplicate</param>
 		/// <param name="standin">Your stub method that will become the original. Needs to have the correct signature (either original or whatever your transpilers generates)</param>
 		/// <param name="transpiler">An optional transpiler that will be applied during the process</param>
-		public static MethodInfo ReversePatch(MethodBase original, HarmonyMethod standin, MethodInfo transpiler = null)
+		public static DynamicMethod ReversePatch(MethodBase original, HarmonyMethod standin, MethodInfo transpiler = null)
 		{
 			return PatchFunctions.ReversePatch(standin, original, transpiler);
 		}

@@ -54,8 +54,18 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+	  <Compile Remove="Internal\InlineSignatureParser.cs" />
+	  <Compile Remove="Public\InlineSignature.cs" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Include="Internal\InlineSignatureParser.cs" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<None Include="..\LICENSE" Pack="true" PackagePath="" />
 		<None Include="..\HarmonyLogo.png" Pack="true" Visible="false" PackagePath="" />
+		<None Include="Public\InlineSignature.cs" />
 	</ItemGroup>
 
 	<PropertyGroup Condition="'$(Configuration)'=='Debug'">

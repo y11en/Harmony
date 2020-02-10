@@ -1,5 +1,3 @@
-using MonoMod.Utils;
-using MonoMod.Utils.Cil;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -326,25 +324,34 @@ namespace HarmonyLib
 						break;
 
 					case OperandType.InlineSig:
-						var cecilGenerator = generator.GetProxiedShim<CecilILGenerator>();
-						if (cecilGenerator == null)
-						{
-							// Right now InlineSignatures can only be emitted using MonoMod.Common and its CecilILGenerator.
-							// That is because DynamicMethod's original ILGenerator is very restrictive about the calli opcode.
-							throw new NotSupportedException();
-						}
+
+						// TODO the following will fail because we do not convert the token (operand)
+						// All the decompilers can show the arguments correctly, we just need to find out how
+						//
 						if (operand == null) throw new Exception($"Wrong null argument: {codeInstruction}");
-						if ((operand is ICallSiteGenerator) == false) throw new Exception($"Wrong Emit argument type {operand.GetType()} in {codeInstruction}");
-						emitter.AddInstruction(code, operand);
-						emitter.LogIL(code, operand);
-						cecilGenerator.Emit(code, (ICallSiteGenerator)operand);
+						if ((operand is int) == false) throw new Exception($"Wrong Emit argument type {operand.GetType()} in {codeInstruction}");
+						emitter.Emit(code, (int)operand);
+
+						/*
+						// the following will only work if we can convert the original signature token to the required arguments
+						//
+						var callingConvention = System.Runtime.InteropServices.CallingConvention.ThisCall;
+						var returnType = typeof(object);
+						var parameterTypes = new[] { typeof(object) };
+						Emitter.EmitCalli(generator, code, callingConvention, returnType, parameterTypes);
+						var callingConventions = System.Reflection.CallingConventions.Standard;
+						var optionalParameterTypes = new[] { typeof(object) };
+						Emitter.EmitCalli(generator, code, callingConventions, returnType, parameterTypes, optionalParameterTypes);
+						*/
 						break;
 
 					default:
 						if (operand == null) throw new Exception($"Wrong null argument: {codeInstruction}");
+						var emitMethod = EmitMethodForType(operand.GetType());
+						if (emitMethod == null) throw new Exception($"Unknown Emit argument type {operand.GetType()} in {codeInstruction}");
 						emitter.AddInstruction(code, operand);
 						emitter.LogIL(code, operand);
-						_ = generator.DynEmit(code, operand);
+						_ = emitMethod.Invoke(generator, new object[] { code, operand });
 						break;
 				}
 
@@ -480,12 +487,10 @@ namespace HarmonyLib
 				{
 					var val = ilBytes.ReadInt32();
 					var bytes = module.ResolveSignature(val);
-					var signature = InlineSignatureParser.ImportCallSite(module, bytes);
-					instruction.operand = signature;
-					instruction.argument = signature;
+					instruction.operand = bytes;
+					instruction.argument = bytes;
 					Debugger.Log(0, "TEST", $"METHOD {method.FullDescription()}\n");
-					Debugger.Log(0, "TEST", $"Signature Blob = {bytes.Select(b => string.Format("0x{0:x02}", b)).Aggregate((a, b) => a + " " + b)}\n");
-					Debugger.Log(0, "TEST", $"Signature = {signature}\n");
+					Debugger.Log(0, "TEST", $"Signature = {bytes.Select(b => string.Format("0x{0:x02}", b)).Aggregate((a, b) => a + " " + b)}\n");
 					Debugger.Break();
 					break;
 				}
@@ -641,10 +646,21 @@ namespace HarmonyLib
 				: two_bytes_opcodes[ilBytes.ReadByte()];
 		}
 
+		static MethodInfo EmitMethodForType(Type type)
+		{
+			foreach (var entry in emitMethods)
+				if (entry.Key == type) return entry.Value;
+			foreach (var entry in emitMethods)
+				if (entry.Key.IsAssignableFrom(type)) return entry.Value;
+			return null;
+		}
+
 		// static initializer to prep opcodes
 
 		static readonly OpCode[] one_byte_opcodes;
 		static readonly OpCode[] two_bytes_opcodes;
+
+		static readonly Dictionary<Type, MethodInfo> emitMethods;
 
 		[MethodImpl(MethodImplOptions.Synchronized)]
 		static MethodBodyReader()
@@ -666,6 +682,18 @@ namespace HarmonyLib
 				else
 					two_bytes_opcodes[opcode.Value & 0xff] = opcode;
 			}
+
+			emitMethods = new Dictionary<Type, MethodInfo>();
+			typeof(ILGenerator).GetMethods().ToList()
+				.Do(method =>
+				{
+					if (method.Name != "Emit") return;
+					var pinfos = method.GetParameters();
+					if (pinfos.Length != 2) return;
+					var types = pinfos.Select(p => p.ParameterType).ToArray();
+					if (types[0] != typeof(OpCode)) return;
+					emitMethods[types[1]] = method;
+				});
 		}
 
 		// a custom this parameter

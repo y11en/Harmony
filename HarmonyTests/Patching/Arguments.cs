@@ -42,14 +42,16 @@ namespace HarmonyLibTests
 		}
 
 		[Test]
-		public void Test_Method7()
+		public void Test_Method7_Instance()
 		{
 			var originalClass = typeof(Class7);
 			Assert.NotNull(originalClass);
-			var originalMethod = originalClass.GetMethod("Method7");
+			var originalMethod = originalClass.GetMethod("Method7_Instance");
 			Assert.NotNull(originalMethod);
 
 			var patchClass = typeof(Class7Patch);
+			var prefix = patchClass.GetMethod("Prefix");
+			Assert.NotNull(prefix);
 			var postfix = patchClass.GetMethod("Postfix");
 			Assert.NotNull(postfix);
 
@@ -58,14 +60,46 @@ namespace HarmonyLibTests
 
 			var patcher = instance.CreateProcessor(originalMethod);
 			Assert.NotNull(patcher);
+			_ = patcher.AddPrefix(prefix);
 			_ = patcher.AddPostfix(postfix);
 
 			_ = patcher.Patch();
 
 			var instance7 = new Class7();
-			var result = instance7.Method7("parameter");
+			var result = instance7.Method7_Instance("parameter-old");
 
-			Assert.AreEqual("parameter", instance7.state1);
+			Assert.AreEqual("parameter-new", instance7.state1);
+			Assert.AreEqual(10, result.a);
+			Assert.AreEqual(20, result.b);
+		}
+
+		[Test]
+		public void Test_Method7_Static()
+		{
+			var originalClass = typeof(Class7);
+			Assert.NotNull(originalClass);
+			var originalMethod = originalClass.GetMethod("Method7_Static");
+			Assert.NotNull(originalMethod);
+
+			var patchClass = typeof(Class7Patch);
+			var prefix = patchClass.GetMethod("Prefix");
+			Assert.NotNull(prefix);
+			var postfix = patchClass.GetMethod("Postfix");
+			Assert.NotNull(postfix);
+
+			var instance = new Harmony("test");
+			Assert.NotNull(instance);
+
+			var patcher = instance.CreateProcessor(originalMethod);
+			Assert.NotNull(patcher);
+			_ = patcher.AddPrefix(prefix);
+			_ = patcher.AddPostfix(postfix);
+
+			_ = patcher.Patch();
+
+			var result = Class7.Method7_Static("parameter-old");
+
+			Assert.AreEqual("parameter-new", Class7.state2);
 			Assert.AreEqual(10, result.a);
 			Assert.AreEqual(20, result.b);
 		}

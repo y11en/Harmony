@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 
 namespace HarmonyLib
 {
@@ -64,7 +65,7 @@ namespace HarmonyLib
 		/// <summary>Applies the patches</summary>
 		/// <returns>A list of all created replacement methods or null if patch class is not annotated</returns>
 		///
-		public List<MethodInfo> Patch()
+		public List<DynamicMethod> Patch()
 		{
 			if (containerAttributes == null)
 				return null;
@@ -77,10 +78,10 @@ namespace HarmonyLib
 				RunMethod<HarmonyCleanup>(ref exception);
 				if (exception != null)
 					ReportException(exception, null);
-				return new List<MethodInfo>();
+				return new List<DynamicMethod>();
 			}
 
-			var replacements = new List<MethodInfo>();
+			var replacements = new List<DynamicMethod>();
 			MethodBase lastOriginal = null;
 			try
 			{
@@ -115,9 +116,9 @@ namespace HarmonyLib
 			}
 		}
 
-		List<MethodInfo> BulkPatch(List<MethodBase> originals, ref MethodBase lastOriginal)
+		List<DynamicMethod> BulkPatch(List<MethodBase> originals, ref MethodBase lastOriginal)
 		{
-			var jobs = new PatchJobs<MethodInfo>();
+			var jobs = new PatchJobs<DynamicMethod>();
 			for (var i = 0; i < originals.Count; i++)
 			{
 				lastOriginal = originals[i];
@@ -146,9 +147,9 @@ namespace HarmonyLib
 			return jobs.GetReplacements();
 		}
 
-		List<MethodInfo> PatchWithAttributes(ref MethodBase lastOriginal)
+		List<DynamicMethod> PatchWithAttributes(ref MethodBase lastOriginal)
 		{
-			var jobs = new PatchJobs<MethodInfo>();
+			var jobs = new PatchJobs<DynamicMethod>();
 			foreach (var patchMethod in patchMethods)
 			{
 				lastOriginal = patchMethod.info.GetOriginalMethod();
@@ -166,9 +167,9 @@ namespace HarmonyLib
 			return jobs.GetReplacements();
 		}
 
-		void ProcessPatchJob(PatchJobs<MethodInfo>.Job job)
+		void ProcessPatchJob(PatchJobs<DynamicMethod>.Job job)
 		{
-			MethodInfo replacement = default;
+			DynamicMethod replacement = default;
 
 			var individualPrepareResult = RunMethod<HarmonyPrepare, bool>(true, false, null, job.original);
 			Exception exception = null;

@@ -1,5 +1,3 @@
-extern alias mmc;
-
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
@@ -277,17 +275,30 @@ namespace HarmonyLibTests.Assets
 	public class Class7
 	{
 		public object state1 = "-";
+		public static object state2 = "-";
 
 		[MethodImpl(MethodImplOptions.NoInlining)]
-		public TestStruct Method7(string test)
+		public TestStruct Method7_Instance(string test)
 		{
 			state1 = test;
+			return new TestStruct() { a = 333, b = 666 };
+		}
+
+		[MethodImpl(MethodImplOptions.NoInlining)]
+		public static TestStruct Method7_Static(string test)
+		{
+			state2 = test;
 			return new TestStruct() { a = 333, b = 666 };
 		}
 	}
 
 	public static class Class7Patch
 	{
+		public static void Prefix(ref string test)
+		{
+			test = "parameter-new";
+		}
+
 		public static void Postfix(ref TestStruct __result)
 		{
 			__result = new TestStruct() { a = 10, b = 20 };
@@ -535,14 +546,14 @@ namespace HarmonyLibTests.Assets
 			return false;
 		}
 #else
-		public static MethodInfo Prefix(MethodBase method)
+		public static DynamicMethod Prefix(MethodBase method)
 		{
-			var dynamicMethod = new mmc::MonoMod.Utils.DynamicMethodDefinition(method.Name + "_Class11Patch_Prefix",
+			var dynamicMethod = new DynamicMethod(method.Name + "_Class11Patch_Prefix",
 				typeof(bool),
 				new[] { typeof(string).MakeByRefType(), typeof(int) });
 
-			dynamicMethod.Definition.Parameters[0].Name = "__result";
-			dynamicMethod.Definition.Parameters[1].Name = "dummy";
+			_ = dynamicMethod.DefineParameter(1, ParameterAttributes.None, "__result");
+			_ = dynamicMethod.DefineParameter(2, ParameterAttributes.None, "dummy");
 
 			var il = dynamicMethod.GetILGenerator();
 
@@ -560,7 +571,7 @@ namespace HarmonyLibTests.Assets
 			il.Emit(OpCodes.Ldc_I4_0);
 			il.Emit(OpCodes.Ret);
 
-			return dynamicMethod.Generate();
+			return dynamicMethod;
 		}
 #endif
 	}

@@ -25,7 +25,7 @@ namespace HarmonyLibTests
 					Assert.NotNull(method);
 
 					var methodInvoker = gcHell ? new MethodInvokerGCHell(directBoxValueAccess) : new MethodInvoker(directBoxValueAccess);
-					var handler = methodInvoker.Handler(method);
+					var handler = methodInvoker.Handler(method, method.DeclaringType.Module);
 					Assert.NotNull(handler);
 
 					var testStruct = new TestMethodInvokerStruct();

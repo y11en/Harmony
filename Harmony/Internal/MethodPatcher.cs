@@ -1,10 +1,9 @@
-using MonoMod.RuntimeDetour;
-using MonoMod.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 
 namespace HarmonyLib
 {
@@ -29,9 +28,8 @@ namespace HarmonyLib
 		readonly List<MethodInfo> finalizers;
 		readonly int idx;
 		readonly bool firstArgIsReturnBuffer;
-		readonly OpCode Ldarg_instance;
 		readonly Type returnType;
-		readonly DynamicMethodDefinition patch;
+		readonly DynamicMethod patch;
 		readonly ILGenerator il;
 		readonly Emitter emitter;
 
@@ -58,10 +56,9 @@ namespace HarmonyLib
 
 			idx = prefixes.Count() + postfixes.Count() + finalizers.Count();
 			firstArgIsReturnBuffer = NativeThisPointer.NeedsNativeThisPointerFix(original);
-			Ldarg_instance = firstArgIsReturnBuffer ? OpCodes.Ldarg_1 : OpCodes.Ldarg_0;
-			if (debug && firstArgIsReturnBuffer) FileLog.Log($"### Special case: Ldarg.0 is return buffer, not instance!");
+			if (debug && firstArgIsReturnBuffer) FileLog.Log($"### Special case: extra argument after 'this' is pointer to valuetype (simulate return value)");
 			returnType = AccessTools.GetReturnedType(original);
-			patch = CreateDynamicMethod(original, $"_Patch{idx}");
+			patch = CreateDynamicMethod(original, $"_Patch{idx}", debug);
 			if (patch == null)
 				throw new Exception("Could not create replacement method");
 
@@ -69,7 +66,7 @@ namespace HarmonyLib
 			emitter = new Emitter(il, debug);
 		}
 
-		internal MethodInfo CreateReplacement(out Dictionary<int, CodeInstruction> finalInstructions)
+		internal DynamicMethod CreateReplacement(out Dictionary<int, CodeInstruction> finalInstructions)
 		{
 			var originalVariables = DeclareLocalVariables(source ?? original);
 			var privateVars = new Dictionary<string, LocalBuilder>();
@@ -107,7 +104,7 @@ namespace HarmonyLib
 			}
 
 			if (firstArgIsReturnBuffer)
-				emitter.Emit(OpCodes.Ldarg_1); // load ref to return value
+				emitter.Emit(original.IsStatic ? OpCodes.Ldarg_0 : OpCodes.Ldarg_1); // load ref to return value
 
 			var skipOriginalLabel = il.DefineLabel();
 			var canHaveJump = AddPrefixes(privateVars, skipOriginalLabel);
@@ -116,7 +113,12 @@ namespace HarmonyLib
 			foreach (var transpiler in transpilers)
 				copier.AddTranspiler(transpiler);
 			if (firstArgIsReturnBuffer)
-				copier.AddTranspiler(NativeThisPointer.m_ArgumentShiftTranspiler);
+			{
+				if (original.IsStatic)
+					copier.AddTranspiler(NativeThisPointer.m_ArgumentShiftTranspilerStatic);
+				else
+					copier.AddTranspiler(NativeThisPointer.m_ArgumentShiftTranspilerInstance);
+			}
 
 			var endLabels = new List<Label>();
 			copier.Finalize(emitter, endLabels, out var endingReturn);
@@ -194,10 +196,11 @@ namespace HarmonyLib
 				FileLog.FlushBuffer();
 			}
 
-			return patch.Generate().Pin();
+			PrepareDynamicMethod(patch);
+			return patch;
 		}
 
-		internal static DynamicMethodDefinition CreateDynamicMethod(MethodBase original, string suffix)
+		internal static DynamicMethod CreateDynamicMethod(MethodBase original, string suffix, bool debug)
 		{
 			if (original == null) throw new ArgumentNullException(nameof(original));
 			var patchName = original.Name + suffix;
@@ -205,6 +208,11 @@ namespace HarmonyLib
 
 			var parameters = original.GetParameters();
 			var parameterTypes = parameters.Types().ToList();
+
+			var firstArgIsReturnBuffer = NativeThisPointer.NeedsNativeThisPointerFix(original);
+			if (firstArgIsReturnBuffer)
+				parameterTypes.Insert(0, typeof(IntPtr));
+
 			if (original.IsStatic == false)
 			{
 				if (AccessTools.IsStruct(original.DeclaringType))
@@ -213,36 +221,125 @@ namespace HarmonyLib
 					parameterTypes.Insert(0, original.DeclaringType);
 			}
 
-			var firstArgIsReturnBuffer = NativeThisPointer.NeedsNativeThisPointerFix(original);
-			if (firstArgIsReturnBuffer)
-				parameterTypes.Insert(0, typeof(IntPtr));
 			var returnType = firstArgIsReturnBuffer ? typeof(void) : AccessTools.GetReturnedType(original);
 
-			var method = new DynamicMethodDefinition(
-				patchName,
-				returnType,
-				parameterTypes.ToArray()
-			)
+			// DynamicMethod does not support byref return types
+			if (returnType == null || returnType.IsByRef)
+				return null;
+
+			if (debug || Harmony.DEBUG)
 			{
-				OwnerType = original.DeclaringType
-			};
+				var args = parameterTypes.Select(type => type.FullDescription()).ToArray().Join();
+				FileLog.Log($">>> {original.DeclaringType.FullDescription()} static {returnType.FullDescription()} {patchName}({args})");
+			}
+
+			var method = new DynamicMethod(
+				patchName,
+				MethodAttributes.Public | MethodAttributes.Static,
+				CallingConventions.Standard,
+				returnType,
+				parameterTypes.ToArray(),
+				original.DeclaringType,
+				true
+			);
 
 #if NETSTANDARD2_0 || NETCOREAPP2_0
 #else
 			var offset = (original.IsStatic ? 0 : 1) + (firstArgIsReturnBuffer ? 1 : 0);
-			if (firstArgIsReturnBuffer)
+			/*if (firstArgIsReturnBuffer)
 				method.Definition.Parameters[0].Name = "retbuf";
 			if (!original.IsStatic)
-				method.Definition.Parameters[firstArgIsReturnBuffer ? 1 : 0].Name = "this";
+				method.Definition.Parameters[firstArgIsReturnBuffer ? 1 : 0].Name = "this";*/
 			for (var i = 0; i < parameters.Length; i++)
-			{
-				var param = method.Definition.Parameters[i + offset];
-				param.Attributes = (Mono.Cecil.ParameterAttributes)parameters[i].Attributes;
-				param.Name = parameters[i].Name;
-			}
+				_ = method.DefineParameter(i + offset, parameters[i].Attributes, parameters[i].Name);
 #endif
 
 			return method;
+		}
+
+		internal static void PrepareDynamicMethod(DynamicMethod method)
+		{
+			var nonPublicInstance = BindingFlags.NonPublic | BindingFlags.Instance;
+			var nonPublicStatic = BindingFlags.NonPublic | BindingFlags.Static;
+
+			// on mono, just call 'CreateDynMethod'	
+			//	
+			var m_CreateDynMethod = method.GetType().GetMethod("CreateDynMethod", nonPublicInstance);
+			if (m_CreateDynMethod != null)
+			{
+				var h_CreateDynMethod = MethodInvoker.GetHandler(m_CreateDynMethod);
+				_ = h_CreateDynMethod(method, new object[0]);
+				return;
+			}
+
+			// on all .NET Core versions, call 'RuntimeHelpers._CompileMethod' but with a different parameter:	
+			//	
+			var m__CompileMethod = typeof(RuntimeHelpers).GetMethod("_CompileMethod", nonPublicStatic);
+			var h__CompileMethod = MethodInvoker.GetHandler(m__CompileMethod);
+
+			var m_GetMethodDescriptor = method.GetType().GetMethod("GetMethodDescriptor", nonPublicInstance);
+			var h_GetMethodDescriptor = MethodInvoker.GetHandler(m_GetMethodDescriptor);
+			var handle = (RuntimeMethodHandle)h_GetMethodDescriptor(method, new object[0]);
+
+			// 1) RuntimeHelpers._CompileMethod(handle.GetMethodInfo())	
+			//	
+			object runtimeMethodInfo = null;
+			var f_m_value = handle.GetType().GetField("m_value", nonPublicInstance);
+			if (f_m_value != null)
+				runtimeMethodInfo = f_m_value.GetValue(handle);
+			else
+			{
+				var f_Value = handle.GetType().GetField("Value", nonPublicInstance);
+				if (f_Value != null)
+					runtimeMethodInfo = f_Value.GetValue(handle);
+				else
+				{
+					var m_GetMethodInfo = handle.GetType().GetMethod("GetMethodInfo", nonPublicInstance);
+					if (m_GetMethodInfo != null)
+					{
+						var h_GetMethodInfo = MethodInvoker.GetHandler(m_GetMethodInfo);
+						runtimeMethodInfo = h_GetMethodInfo(handle, new object[0]);
+					}
+				}
+			}
+			if (runtimeMethodInfo != null)
+			{
+				// Core 3.1 fails for certain methods in the try statement below	
+				// The following extraction is wrong and stands here as a reminder that	
+				// we need to fix that runtimeMethodInfo sometimes is a RuntimeMethodInfoStub	
+				//	
+				//f_m_value = runtimeMethodInfo.GetType().GetField("m_value");	
+				//if (f_m_value != null)	
+				//	runtimeMethodInfo = f_m_value.GetValue(runtimeMethodInfo);	
+
+				try
+				{
+					// this can throw BadImageFormatException "An attempt was made to load a program with an incorrect format"	
+					_ = h__CompileMethod(null, new object[] { runtimeMethodInfo });
+					return;
+				}
+#pragma warning disable RECS0022
+				catch
+#pragma warning restore RECS0022
+				{
+				}
+			}
+
+			// 2) RuntimeHelpers._CompileMethod(handle.Value)	
+			//	
+			if (m__CompileMethod.GetParameters()[0].ParameterType.IsAssignableFrom(handle.Value.GetType()))
+			{
+				_ = h__CompileMethod(null, new object[] { handle.Value });
+				return;
+			}
+
+			// 3) RuntimeHelpers._CompileMethod(handle)	
+			//	
+			if (m__CompileMethod.GetParameters()[0].ParameterType.IsAssignableFrom(handle.GetType()))
+			{
+				_ = h__CompileMethod(null, new object[] { handle });
+				return;
+			}
 		}
 
 		LocalBuilder[] DeclareLocalVariables(MethodBase member)
@@ -331,7 +428,6 @@ namespace HarmonyLib
 			var isInstance = original.IsStatic == false;
 			var originalParameters = original.GetParameters();
 			var originalParameterNames = originalParameters.Select(p => p.Name).ToArray();
-			var firstArgIsReturnBuffer = NativeThisPointer.NeedsNativeThisPointerFix(original);
 
 			// check for passthrough using first parameter (which must have same type as return type)
 			var parameters = patch.GetParameters().ToList();
@@ -359,11 +455,11 @@ namespace HarmonyLib
 						var parameterIsRef = patchParam.ParameterType.IsByRef;
 						if (instanceIsRef == parameterIsRef)
 						{
-							emitter.Emit(Ldarg_instance);
+							emitter.Emit(OpCodes.Ldarg_0);
 						}
 						if (instanceIsRef && parameterIsRef == false)
 						{
-							emitter.Emit(Ldarg_instance);
+							emitter.Emit(OpCodes.Ldarg_0);
 							emitter.Emit(OpCodes.Ldobj, original.DeclaringType);
 						}
 						if (instanceIsRef == false && parameterIsRef)
@@ -396,7 +492,7 @@ namespace HarmonyLib
 						emitter.Emit(patchParam.ParameterType.IsByRef ? OpCodes.Ldsflda : OpCodes.Ldsfld, fieldInfo);
 					else
 					{
-						emitter.Emit(Ldarg_instance);
+						emitter.Emit(OpCodes.Ldarg_0);
 						emitter.Emit(patchParam.ParameterType.IsByRef ? OpCodes.Ldflda : OpCodes.Ldfld, fieldInfo);
 					}
 					continue;

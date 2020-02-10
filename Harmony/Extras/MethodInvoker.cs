@@ -1,4 +1,3 @@
-using MonoMod.Utils;
 using System;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -16,12 +15,21 @@ namespace HarmonyLib
 	/// <summary>A helper class to invoke method with delegates</summary>
 	public class MethodInvoker
 	{
-		/// <summary>Creates a fast invocation handler from a method</summary>
+		/// <summary>Creates a fast invocation handler from a method and a module</summary>
+		/// <param name="methodInfo">The method to invoke</param>
+		/// <param name="module">The module context</param>
+		/// <returns>The fast invocation handler</returns>
+		public static FastInvokeHandler GetHandler(MethodInfo methodInfo, Module module)
+		{
+			return defaultInstance.Handler(methodInfo, module);
+		}
+
+		/// <summary>Creates a fast invocation handler from a method and its declaring type's module</summary>
 		/// <param name="methodInfo">The method to invoke</param>
 		/// <returns>The fast invocation handler</returns>
 		public static FastInvokeHandler GetHandler(MethodInfo methodInfo)
 		{
-			return defaultInstance.Handler(methodInfo);
+			return defaultInstance.Handler(methodInfo, methodInfo.DeclaringType.Module);
 		}
 
 		static readonly MethodInvoker defaultInstance = new MethodInvoker();
@@ -63,10 +71,11 @@ namespace HarmonyLib
 
 		/// <summary>Creates a fast invocation handler from a method and a module</summary>
 		/// <param name="methodInfo">The method to invoke</param>
+		/// <param name="module">The module context</param>
 		/// <returns>The fast invocation handler</returns>
-		public FastInvokeHandler Handler(MethodInfo methodInfo)
+		public FastInvokeHandler Handler(MethodInfo methodInfo, Module module)
 		{
-			var dynamicMethod = new DynamicMethodDefinition($"FastInvoke_{methodInfo.Name}_{(directBoxValueAccess ? "direct" : "indirect")}", typeof(object), new Type[] { typeof(object), typeof(object[]) });
+			var dynamicMethod = new DynamicMethod($"FastInvoke_{methodInfo.Name}_{(directBoxValueAccess ? "direct" : "indirect")}", typeof(object), new Type[] { typeof(object), typeof(object[]) }, module, true);
 			var il = dynamicMethod.GetILGenerator();
 
 			if (!methodInfo.IsStatic)
@@ -157,7 +166,7 @@ namespace HarmonyLib
 
 			Emit(il, OpCodes.Ret);
 
-			var invoder = (FastInvokeHandler)dynamicMethod.Generate().CreateDelegate(typeof(FastInvokeHandler));
+			var invoder = (FastInvokeHandler)dynamicMethod.CreateDelegate(typeof(FastInvokeHandler));
 			return invoder;
 		}
 
